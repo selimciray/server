@@ -1,7 +1,7 @@
 {
   "maintenance": false,
   "maintenance_message": "Sunucu bakımda, birazdan döneceğiz.",
-  "announcement": "v1.2 güncellendi! Yeni stadyumlar eklendi.",
+  "announcement": "Season 1 is live! Welcome to Dream Team Manager – build your squad and compete now.",
   "announcement_image": "https://raw.githubusercontent.com/selimciray/server/refs/heads/main/data/SEASON%201%20KICKOFF.png",
   "latest_version": "1.2.0",
   "min_required_version": "1.0.0"
