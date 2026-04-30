@@ -103,10 +103,9 @@ app.post("/auth", (req, res) => {
     status: "ok",
     message: "Giriş başarılı",
     announcement: config.announcement || "",
+    announcement_image: config.announcement_image || "",  // ← bunu ekle
     country
-  });
 });
-
 // ============================
 // 🔧 ADMIN PANEL (ŞİFRELİ)
 // ============================
