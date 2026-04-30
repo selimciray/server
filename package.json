@@ -1,12 +1,12 @@
 {
-  "name": "auth-server",
+  "name": "game-server",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node app.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "geoip-lite": "^1.4.7"
+    "geoip-lite": "^1.4.10"
   }
 }
