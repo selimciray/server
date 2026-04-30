@@ -8,84 +8,52 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// 📁 Dosya yolları
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR    = path.join(__dirname, "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const PLAYERS_PATH = path.join(DATA_DIR, "players.json");
 
-// 📁 Klasör yoksa oluştur
 try {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    console.log("Data klasörü oluşturuldu:", DATA_DIR);
-  }
-} catch (err) {
-  console.error("Klasör oluşturma hatası:", err);
-}
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (err) { console.error("Klasör hatası:", err); }
 
-// 📄 Dosya yoksa oluştur
 try {
   if (!fs.existsSync(CONFIG_PATH)) {
-    const defaultConfig = {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify({
       maintenance: false,
       maintenance_message: "",
       announcement: "",
+      announcement_image: "",
       latest_version: "1.0.0",
       min_required_version: "1.0.0"
-    };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2), "utf8");
-    console.log("Config dosyası oluşturuldu");
+    }, null, 2), "utf8");
   }
-} catch (err) {
-  console.error("Config dosyası oluşturma hatası:", err);
-}
+} catch (err) { console.error("Config hatası:", err); }
 
 try {
-  if (!fs.existsSync(PLAYERS_PATH)) {
+  if (!fs.existsSync(PLAYERS_PATH))
     fs.writeFileSync(PLAYERS_PATH, JSON.stringify({}, null, 2), "utf8");
-    console.log("Players dosyası oluşturuldu");
-  }
-} catch (err) {
-  console.error("Players dosyası oluşturma hatası:", err);
-}
+} catch (err) { console.error("Players hatası:", err); }
 
-// 📥 JSON oku (güvenli)
 function readJSON(filePath) {
   try {
-    if (!fs.existsSync(filePath)) {
-      console.warn("Dosya bulunamadı:", filePath);
-      return {};
-    }
-    const data = fs.readFileSync(filePath, "utf8");
-    return JSON.parse(data);
-  } catch (e) {
-    console.error("JSON okuma hatası:", filePath, e.message);
-    return {};
-  }
+    if (!fs.existsSync(filePath)) return {};
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (e) { console.error("JSON okuma hatası:", e.message); return {}; }
 }
 
-// 💾 JSON yaz
 function writeJSON(filePath, data) {
   try {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
     return true;
-  } catch (e) {
-    console.error("JSON yazma hatası:", filePath, e.message);
-    return false;
-  }
+  } catch (e) { console.error("JSON yazma hatası:", e.message); return false; }
 }
 
-// 🌍 IP alma (Render uyumlu)
 function getIP(req) {
   try {
-    const ipRaw = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket.remoteAddress ||
-      "0.0.0.0";
+    const ipRaw = req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
+      || req.socket.remoteAddress || "0.0.0.0";
     return ipRaw.replace("::ffff:", "").replace("::1", "127.0.0.1");
-  } catch (e) {
-    console.error("IP alma hatası:", e);
-    return "0.0.0.0";
-  }
+  } catch (e) { return "0.0.0.0"; }
 }
 
 // ============================
@@ -93,155 +61,119 @@ function getIP(req) {
 // ============================
 app.post("/auth", (req, res) => {
   try {
-    const config = readJSON(CONFIG_PATH);
+    const config  = readJSON(CONFIG_PATH);
     const players = readJSON(PLAYERS_PATH);
 
-    const { username, deviceId, version } = req.body;
-    const ip = getIP(req);
+    // Godot game_id gönderiyor — username/deviceId yerine game_id kabul et
+    const game_id = req.body.game_id || req.body.username || req.body.deviceId;
+    const version = req.body.version;
+    const ip      = getIP(req);
 
-    // Input validasyonu
-    if (!username || !deviceId || !version) {
-      return res.status(400).json({
-        status: "error",
-        message: "Eksik parametre: username, deviceId, version gerekli"
-      });
+    if (!game_id || !version) {
+      return res.status(400).json({ status: "error", message: "game_id ve version gerekli" });
     }
 
-    // 🌍 Ülke tespiti
-    const geo = geoip.lookup(ip);
+    const geo     = geoip.lookup(ip);
     const country = geo ? geo.country : "UNKNOWN";
 
-    // 🛠️ Maintenance kontrolü
+    // Bakım kontrolü
     if (config.maintenance) {
       return res.json({
         status: "maintenance",
-        message: config.maintenance_message || "Sunucu bakımda"
+        maintenance: true,
+        maintenance_message: config.maintenance_message || "Sunucu bakımda",
+        latest_version: config.latest_version,
+        announcement: config.announcement || "",
+        announcement_image: config.announcement_image || "",
+        country
       });
     }
 
-    // 🔄 Versiyon kontrolü
+    // Versiyon kontrolü
     if (version !== config.latest_version) {
       return res.json({
         status: "update_required",
         latest_version: config.latest_version || "1.0.0",
-        message: "Lütfen güncelleyin"
+        announcement: config.announcement || "",
+        announcement_image: config.announcement_image || "",
+        country
       });
     }
 
-    // 👤 Kullanıcı yoksa oluştur
-    if (!players[username]) {
-      players[username] = {
-        deviceId,
-        ip,
-        country,
-        createdAt: new Date().toISOString(),
-        lastLogin: new Date().toISOString()
-      };
-      writeJSON(PLAYERS_PATH, players);
-      console.log("Yeni kullanıcı:", username, country);
+    // Oyuncu kaydet/güncelle
+    if (!players[game_id]) {
+      players[game_id] = { ip, country, createdAt: new Date().toISOString(), lastLogin: new Date().toISOString() };
+      console.log("Yeni oyuncu:", game_id, country);
     } else {
-      // Mevcut kullanıcıyı güncelle
-      players[username].lastLogin = new Date().toISOString();
-      players[username].ip = ip;
-      players[username].country = country;
-      writeJSON(PLAYERS_PATH, players);
+      players[game_id].lastLogin = new Date().toISOString();
+      players[game_id].ip = ip;
+      players[game_id].country = country;
     }
+    writeJSON(PLAYERS_PATH, players);
 
     return res.json({
       status: "ok",
       message: "Giriş başarılı",
       announcement: config.announcement || "",
-      country,
-      user: players[username]
+      announcement_image: config.announcement_image || "",
+      latest_version: config.latest_version,
+      country
     });
+
   } catch (error) {
     console.error("Auth error:", error);
-    return res.status(500).json({
-      status: "error",
-      message: "Sunucu hatası"
-    });
+    return res.status(500).json({ status: "error", message: "Sunucu hatası" });
   }
 });
 
 // ============================
-// 🔧 ADMIN PANEL (ŞİFRELİ)
+// 🔓 LOGOUT
 // ============================
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "123456"; // Environment variable'dan al
+app.post("/logout", (req, res) => {
+  const { game_id } = req.body;
+  console.log("Logout:", game_id);
+  res.json({ status: "ok" });
+});
+
+// ============================
+// 🔧 ADMIN
+// ============================
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "123456";
 
 app.post("/admin/config", (req, res) => {
   const { token, newConfig } = req.body;
-
-  if (token !== ADMIN_TOKEN) {
-    return res.status(403).json({ error: "Yetkisiz erişim" });
-  }
-
-  if (!newConfig || typeof newConfig !== 'object') {
-    return res.status(400).json({ error: "Geçersiz config" });
-  }
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error: "Yetkisiz" });
+  if (!newConfig || typeof newConfig !== "object") return res.status(400).json({ error: "Geçersiz config" });
 
   try {
-    // Mevcut configi koru ve yeni değerlerle birleştir
-    const currentConfig = readJSON(CONFIG_PATH);
-    const updatedConfig = { ...currentConfig, ...newConfig };
-    writeJSON(CONFIG_PATH, updatedConfig);
-    
-    return res.json({
-      status: "updated",
-      config: updatedConfig
-    });
-  } catch (error) {
-    console.error("Admin update error:", error);
+    const current = readJSON(CONFIG_PATH);
+    const updated = { ...current, ...newConfig };
+    writeJSON(CONFIG_PATH, updated);
+    return res.json({ status: "updated", config: updated });
+  } catch (e) {
     return res.status(500).json({ error: "Config güncellenemedi" });
   }
 });
 
 // ============================
-// 📊 PLAYER LIST (DEBUG)
+// 📊 PLAYERS
 // ============================
 app.get("/players", (req, res) => {
   try {
     const players = readJSON(PLAYERS_PATH);
-    const playerCount = Object.keys(players).length;
-    
-    res.json({
-      total: playerCount,
-      players: players
-    });
-  } catch (error) {
-    console.error("Players fetch error:", error);
-    res.status(500).json({ error: "Oyuncu listesi alınamadı" });
+    res.json({ total: Object.keys(players).length, players });
+  } catch (e) {
+    res.status(500).json({ error: "Liste alınamadı" });
   }
 });
 
-// ============================
-// 🏠 TEST
-// ============================
 app.get("/", (req, res) => {
-  res.json({
-    status: "active",
-    message: "Server çalışıyor 🚀",
-    timestamp: new Date().toISOString(),
-    version: "1.0.0"
-  });
+  res.json({ status: "active", message: "Server çalışıyor 🚀", timestamp: new Date().toISOString() });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: "Endpoint bulunamadı" });
-});
+app.use((req, res) => res.status(404).json({ error: "Endpoint bulunamadı" }));
+app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: "Sunucu hatası" }); });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error("Global error:", err);
-  res.status(500).json({ error: "Sunucu hatası" });
-});
-
-// ============================
-// 🚀 SERVER
-// ============================
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Data directory: ${DATA_DIR}`);
-  console.log(`Config path: ${CONFIG_PATH}`);
-  console.log(`Players path: ${PLAYERS_PATH}`);
 });
