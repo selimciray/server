@@ -193,19 +193,36 @@ app.get("/wallet/:game_id", (req, res) => {
 });
 
 // Günlük ödül al
+// Günlük ödül al
 app.post("/daily", (req, res) => {
   const { game_id } = req.body;
   if (!game_id) return res.status(400).json({ error: "game_id gerekli" });
 
-  const players = readJSON(PLAYERS_PATH);
-  if (!players[game_id]) return res.status(404).json({ error: "Oyuncu bulunamadı" });
-
-  const p = players[game_id];
+  let players = readJSON(PLAYERS_PATH);
   const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10); // "2024-01-15"
+  const todayStr = now.toISOString().slice(0, 10);
+
+  // --- YENİ EKLENEN KONTROL ---
+  // Eğer oyuncu kaydı yoksa, sıfırdan oluştur
+  if (!players[game_id]) {
+    players[game_id] = {
+      first_seen: now.toISOString(),
+      balance: 0,
+      total_earned: 0,
+      streak: 0,
+      ip: "unknown",           // İsteğe bağlı: auth bilgisi olmadığı için
+      country: "UNKNOWN"       // İsteğe bağlı: auth bilgisi olmadığı için
+    };
+    writeJSON(PLAYERS_PATH, players); // Hemen kaydet ki referans sağlam olsun
+    console.log("Daily - Yeni oyuncu oluşturuldu:", game_id);
+  }
+  // --- YENİ EKLENEN KISIM SONU ---
+
+  // Artık players[game_id]'in var olduğundan eminiz
+  const p = players[game_id];
   const lastStr  = p.last_daily ?? "";
 
-  // Aynı gün mi?
+  // Aynı gün mü?
   if (lastStr === todayStr) {
     return res.json({
       claimed: false,
