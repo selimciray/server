@@ -177,3 +177,97 @@ app.use((err, req, res, next) => { console.error(err); res.status(500).json({ er
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// ─── Para & Günlük Ödül Endpointleri ─────────────────────────────────────────
+
+// Oyuncu bakiyesini getir
+app.get("/wallet/:game_id", (req, res) => {
+  const players = readJSON(PLAYERS_PATH);
+  const p = players[req.params.game_id];
+  if (!p) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+  res.json({
+    balance: p.balance ?? 0,
+    total_earned: p.total_earned ?? 0,
+    streak: p.streak ?? 0,
+  });
+});
+
+// Günlük ödül al
+app.post("/daily", (req, res) => {
+  const { game_id } = req.body;
+  if (!game_id) return res.status(400).json({ error: "game_id gerekli" });
+
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id]) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+
+  const p = players[game_id];
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10); // "2024-01-15"
+  const lastStr  = p.last_daily ?? "";
+
+  // Aynı gün mi?
+  if (lastStr === todayStr) {
+    return res.json({
+      claimed: false,
+      reason: "already_claimed",
+      next_reset: _nextMidnightISO(),
+      balance: p.balance ?? 0,
+      streak: p.streak ?? 0,
+    });
+  }
+
+  // Streak hesapla
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+  const newStreak = (lastStr === yesterdayStr) ? (p.streak ?? 0) + 1 : 1;
+
+  // Ödül miktarı (streak bonusu: her 7 gün +50 ekstra, max 300)
+  const base    = 100;
+  const bonus   = Math.min(Math.floor(newStreak / 7) * 50, 200);
+  const reward  = base + bonus;
+
+  p.balance      = (p.balance ?? 0) + reward;
+  p.total_earned = (p.total_earned ?? 0) + reward;
+  p.streak       = newStreak;
+  p.last_daily   = todayStr;
+
+  writeJSON(PLAYERS_PATH, players);
+
+  res.json({
+    claimed: true,
+    reward,
+    bonus,
+    streak: newStreak,
+    balance: p.balance,
+    total_earned: p.total_earned,
+    next_reset: _nextMidnightISO(),
+  });
+});
+
+// Para harca (oyun içi satın alım için)
+app.post("/spend", (req, res) => {
+  const { game_id, amount, reason } = req.body;
+  if (!game_id || !amount || amount <= 0)
+    return res.status(400).json({ error: "Geçersiz istek" });
+
+  const players = readJSON(PLAYERS_PATH);
+  const p = players[game_id];
+  if (!p) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+  if ((p.balance ?? 0) < amount)
+    return res.status(400).json({ error: "Yetersiz bakiye" });
+
+  p.balance -= amount;
+  if (!p.transactions) p.transactions = [];
+  p.transactions.push({ type: "spend", amount, reason, date: new Date().toISOString() });
+  writeJSON(PLAYERS_PATH, players);
+
+  res.json({ success: true, balance: p.balance });
+});
+
+// Yardımcı
+function _nextMidnightISO() {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.toISOString();
+}
