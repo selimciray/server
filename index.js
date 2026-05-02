@@ -102,12 +102,14 @@ app.post("/auth", (req, res) => {
 
     // Oyuncu kaydet/güncelle
     if (!players[game_id]) {
-      players[game_id] = { ip, country, createdAt: new Date().toISOString(), lastLogin: new Date().toISOString() };
+      players[game_id] = { ip, country, createdAt: new Date().toISOString(), lastLogin: new Date().toISOString(), online: true, last_seen: new Date().toISOString() };
       console.log("Yeni oyuncu:", game_id, country);
     } else {
       players[game_id].lastLogin = new Date().toISOString();
       players[game_id].ip = ip;
       players[game_id].country = country;
+      players[game_id].online = true;
+      players[game_id].last_seen = new Date().toISOString();
     }
     writeJSON(PLAYERS_PATH, players);
 
@@ -131,6 +133,7 @@ app.post("/auth", (req, res) => {
 // ============================
 app.post("/logout", (req, res) => {
   const { game_id } = req.body;
+  if (game_id) setOffline(game_id);  // ← setOffline fonksiyonunu çağır
   console.log("Logout:", game_id);
   res.json({ status: "ok" });
 });
