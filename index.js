@@ -288,3 +288,190 @@ function _nextMidnightISO() {
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();
 }
+
+app.post("/heartbeat", (req, res) => {
+  const { game_id } = req.body;
+  if (!game_id) return res.status(400).json({ error: "game_id gerekli" });
+ 
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id]) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+ 
+  players[game_id].online    = true;
+  players[game_id].last_seen = new Date().toISOString();
+  writeJSON(PLAYERS_PATH, players);
+ 
+  res.json({ status: "ok" });
+});
+ 
+// ─── Çevrimdışı yap (logout çağrıldığında) ───────────────────────────────────
+// Mevcut /logout endpointini bu fonksiyonu çağıracak şekilde güncelle:
+function setOffline(game_id) {
+  const players = readJSON(PLAYERS_PATH);
+  if (players[game_id]) {
+    players[game_id].online    = false;
+    players[game_id].last_seen = new Date().toISOString();
+    writeJSON(PLAYERS_PATH, players);
+  }
+}
+ 
+// ─── Arkadaş isteği gönder ───────────────────────────────────────────────────
+// POST /friend/request  { game_id, target_id }
+app.post("/friend/request", (req, res) => {
+  const { game_id, target_id } = req.body;
+  if (!game_id || !target_id)
+    return res.status(400).json({ error: "game_id ve target_id gerekli" });
+  if (game_id === target_id)
+    return res.status(400).json({ error: "Kendine istek gönderemezsin" });
+ 
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id])  return res.status(404).json({ error: "Gönderen bulunamadı" });
+  if (!players[target_id]) return res.status(404).json({ error: "Hedef oyuncu bulunamadı" });
+ 
+  const sender = players[game_id];
+  const target = players[target_id];
+ 
+  // Zaten arkadaş mı?
+  if ((sender.friends || []).includes(target_id))
+    return res.status(400).json({ error: "Zaten arkadaşsınız" });
+ 
+  // Zaten istek gönderilmiş mi?
+  if ((target.friend_requests || []).some(r => r.from === game_id))
+    return res.status(400).json({ error: "İstek zaten gönderildi" });
+ 
+  // Karşı taraftan istek var mı? → Otomatik kabul et
+  const reverseIndex = (sender.friend_requests || []).findIndex(r => r.from === target_id);
+  if (reverseIndex !== -1) {
+    // Otomatik karşılıklı arkadaş yap
+    sender.friend_requests.splice(reverseIndex, 1);
+    sender.friends = [...(sender.friends || []), target_id];
+    target.friends = [...(target.friends || []), game_id];
+    writeJSON(PLAYERS_PATH, players);
+    return res.json({ status: "auto_accepted", message: "Karşılıklı istek — arkadaş oldunuz!" });
+  }
+ 
+  // Normal istek gönder
+  if (!target.friend_requests) target.friend_requests = [];
+  target.friend_requests.push({ from: game_id, sent_at: new Date().toISOString() });
+  writeJSON(PLAYERS_PATH, players);
+ 
+  res.json({ status: "sent" });
+});
+ 
+// ─── Arkadaş isteğini kabul et ───────────────────────────────────────────────
+// POST /friend/accept  { game_id, requester_id }
+app.post("/friend/accept", (req, res) => {
+  const { game_id, requester_id } = req.body;
+  if (!game_id || !requester_id)
+    return res.status(400).json({ error: "game_id ve requester_id gerekli" });
+ 
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id])      return res.status(404).json({ error: "Oyuncu bulunamadı" });
+  if (!players[requester_id]) return res.status(404).json({ error: "İsteği gönderen bulunamadı" });
+ 
+  const me        = players[game_id];
+  const requester = players[requester_id];
+ 
+  const reqIndex = (me.friend_requests || []).findIndex(r => r.from === requester_id);
+  if (reqIndex === -1) return res.status(404).json({ error: "Bu kişiden istek yok" });
+ 
+  // İsteği sil, iki tarafa da arkadaş ekle
+  me.friend_requests.splice(reqIndex, 1);
+  me.friends        = [...(me.friends || []),        requester_id];
+  requester.friends = [...(requester.friends || []), game_id];
+  writeJSON(PLAYERS_PATH, players);
+ 
+  res.json({ status: "accepted" });
+});
+ 
+// ─── Arkadaş isteğini reddet ─────────────────────────────────────────────────
+// POST /friend/decline  { game_id, requester_id }
+app.post("/friend/decline", (req, res) => {
+  const { game_id, requester_id } = req.body;
+  if (!game_id || !requester_id)
+    return res.status(400).json({ error: "game_id ve requester_id gerekli" });
+ 
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id]) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+ 
+  const me = players[game_id];
+  const reqIndex = (me.friend_requests || []).findIndex(r => r.from === requester_id);
+  if (reqIndex === -1) return res.status(404).json({ error: "Bu kişiden istek yok" });
+ 
+  me.friend_requests.splice(reqIndex, 1);
+  writeJSON(PLAYERS_PATH, players);
+  res.json({ status: "declined" });
+});
+ 
+// ─── Arkadaşı sil ────────────────────────────────────────────────────────────
+// POST /friend/remove  { game_id, target_id }
+app.post("/friend/remove", (req, res) => {
+  const { game_id, target_id } = req.body;
+  if (!game_id || !target_id)
+    return res.status(400).json({ error: "game_id ve target_id gerekli" });
+ 
+  const players = readJSON(PLAYERS_PATH);
+  if (!players[game_id])  return res.status(404).json({ error: "Oyuncu bulunamadı" });
+  if (!players[target_id]) return res.status(404).json({ error: "Hedef bulunamadı" });
+ 
+  players[game_id].friends  = (players[game_id].friends || []).filter(id => id !== target_id);
+  players[target_id].friends = (players[target_id].friends || []).filter(id => id !== game_id);
+  writeJSON(PLAYERS_PATH, players);
+  res.json({ status: "removed" });
+});
+ 
+// ─── Arkadaş listesi + çevrimiçi durumu ──────────────────────────────────────
+// GET /friends/:game_id
+app.get("/friends/:game_id", (req, res) => {
+  const players = readJSON(PLAYERS_PATH);
+  const me = players[req.params.game_id];
+  if (!me) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+ 
+  const ONLINE_THRESHOLD_MS = 60 * 1000; // 60 saniye — heartbeat 30s'de bir
+ 
+  const friends = (me.friends || []).map(fid => {
+    const f = players[fid];
+    if (!f) return null;
+ 
+    // last_seen'e göre gerçek zamanlı çevrimiçi kontrolü
+    let isOnline = false;
+    if (f.last_seen) {
+      const diff = Date.now() - new Date(f.last_seen).getTime();
+      isOnline = diff < ONLINE_THRESHOLD_MS;
+    }
+ 
+    return {
+      id:          fid,
+      online:      isOnline,
+      last_seen:   f.last_seen || null,
+      country:     f.country   || "UNKNOWN",
+    };
+  }).filter(Boolean);
+ 
+  // Bekleyen gelen istekler
+  const incoming = (me.friend_requests || []).map(r => ({
+    from:     r.from,
+    sent_at:  r.sent_at,
+  }));
+ 
+  res.json({
+    friends,
+    incoming_requests: incoming,
+    friend_count:      friends.length,
+    online_count:      friends.filter(f => f.online).length,
+  });
+});
+ 
+// ─── ID ile oyuncu ara (arkadaş eklemek için) ────────────────────────────────
+// GET /player/find/:target_id
+app.get("/player/find/:target_id", (req, res) => {
+  const players = readJSON(PLAYERS_PATH);
+  const p = players[req.params.target_id];
+  if (!p) return res.status(404).json({ error: "Oyuncu bulunamadı" });
+ 
+  res.json({
+    id:      req.params.target_id,
+    country: p.country || "UNKNOWN",
+    // Hassas bilgiler gönderilmiyor (ip, balance vs.)
+  });
+});
+ 
